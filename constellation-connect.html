@@ -31,6 +31,8 @@
     .hint{font-size:0.9rem;opacity:0.9}
     .footer{margin-top:12px;font-size:0.9rem;opacity:0.9}
     .status{margin-top:8px;color:#bfe3ff}
+    .finish-message{margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(58,136,255,0.14);color:#d4ebff;box-shadow:0 0 0 0 rgba(255,255,255,0);transition:box-shadow 0.3s ease}
+    .finish-message.complete{box-shadow:0 0 0 10px rgba(58,136,255,0.08)}
     p.instructions{margin:8px 0 0 0;font-size:0.95rem}
 
     /* small screens */
@@ -67,6 +69,7 @@
           <div class="stat"><strong>Status:</strong>
             <div id="status" class="status" aria-live="polite">Ready</div>
           </div>
+          <div id="finish-message" class="finish-message" aria-live="polite"></div>
           <p class="instructions">How to play: Click a star to start a segment, then click another star to connect. Recreate the hidden target constellation (faint preview). Lines cannot cross. Use <strong>Hint</strong> to show one missing connection.</p>
           <div class="footer">Created as a single-file HTML game.</div>
         </aside>
@@ -112,6 +115,7 @@
     const maxEl = document.getElementById('max');
     const starsCountEl = document.getElementById('stars-count');
     const statusEl = document.getElementById('status');
+    const finishMessageEl = document.getElementById('finish-message');
 
     let state = {
       levelIndex:0,
@@ -149,14 +153,17 @@
       maxEl.textContent = state.maxLines;
       starsCountEl.textContent = state.stars.length;
       statusEl.textContent = 'Ready';
+      finishMessageEl.textContent = '';
+      finishMessageEl.classList.remove('complete');
       render();
     }
 
     function edgeKey(a,b){ return a<b? a+'-'+b : b+'-'+a }
 
     function render(){
-      const W = canvas.clientWidth || 720;
-      const H = canvas.clientHeight || 540;
+      const rect = canvas.getBoundingClientRect();
+      const W = rect.width || 720;
+      const H = rect.height || 540;
       // clear
       ctx.clearRect(0,0, W, H);
       // background starfield
@@ -188,24 +195,25 @@
       });
 
       // draw stars
+      const usedStars = new Set();
+      state.segments.forEach(seg => { usedStars.add(seg.a); usedStars.add(seg.b); });
       starsPx.forEach((pt,i)=>{
-        // halo
-        ctx.beginPath(); ctx.fillStyle = 'rgba(255,211,107,0.12)'; ctx.arc(pt.px,pt.py,12,0,Math.PI*2); ctx.fill();
-        // core
-        ctx.beginPath(); ctx.fillStyle = 'var(--star)'; ctx.arc(pt.px,pt.py,5,0,Math.PI*2); ctx.fill();
-        // index label small
-        ctx.fillStyle = '#ffffff66'; ctx.font='11px Arial'; ctx.fillText(i+1, pt.px+8, pt.py+4);
+        const isSelected = state.selected === i;
+        const isUsed = usedStars.has(i);
+        const haloColor = isSelected ? 'rgba(142,197,255,0.28)' : isUsed ? 'rgba(142,197,255,0.16)' : 'rgba(255,211,107,0.12)';
+        const coreColor = isSelected ? '#ffffff' : isUsed ? '#a4d4ff' : 'var(--star)';
+        ctx.beginPath(); ctx.fillStyle = haloColor; ctx.arc(pt.px,pt.py,isSelected?16:13,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.fillStyle = coreColor; ctx.arc(pt.px,pt.py,isSelected?7:5,0,Math.PI*2); ctx.fill();
+        if(isSelected){ ctx.beginPath(); ctx.strokeStyle='rgba(142,197,255,0.95)'; ctx.lineWidth=2; ctx.arc(pt.px,pt.py,18,0,Math.PI*2); ctx.stroke(); }
+        ctx.fillStyle = '#ffffffcc'; ctx.font='11px Arial'; ctx.fillText(i+1, pt.px+8, pt.py+4);
       });
-
-      // highlight selected
-      if(state.selected !== null){ const s = starsPx[state.selected]; ctx.beginPath(); ctx.strokeStyle='#ffffff88'; ctx.lineWidth=2; ctx.arc(s.px,s.py,14,0,Math.PI*2); ctx.stroke(); }
     }
 
     // detect nearest star
     function findStarAt(px,py){
       const rect = canvas.getBoundingClientRect();
-      const W = canvas.clientWidth || 720;
-      const H = canvas.clientHeight || 540;
+      const W = rect.width || 720;
+      const H = rect.height || 540;
       const padding = 40;
       const starsPx = state.stars.map(s=>({px: padding + s.x*(W-2*padding), py: padding + s.y*(H-2*padding)}));
       for(let i=0;i<starsPx.length;i++){
@@ -248,8 +256,15 @@
     function checkWin(){
       // Win if placed edges include all targets (orderless) and no extras (we allow extras but require at least all targets)
       let matched = 0; for(const t of state.targets){ if(state.placed.has(t)) matched++ }
-      if(matched === state.targets.size){ statusEl.textContent='You completed the constellation! 🎉'; }
-      else statusEl.textContent = `Connected ${matched}/${state.targets.size}`;
+      if(matched === state.targets.size){
+        statusEl.textContent='You completed the constellation! 🎉';
+        finishMessageEl.textContent = 'Great job! You have finished the constellation. Refresh or click Reset to play again.';
+        finishMessageEl.classList.add('complete');
+      } else {
+        statusEl.textContent = `Connected ${matched}/${state.targets.size}`;
+        finishMessageEl.textContent = '';
+        finishMessageEl.classList.remove('complete');
+      }
     }
 
     // canvas interaction
@@ -259,9 +274,14 @@
       const i = findStarAt(x,y);
       if(i===null){ state.selected=null; render(); return }
       if(state.selected===null){ state.selected=i; statusEl.textContent=`Selected star ${i+1}`; render(); return }
-      // try place between state.selected and i
-      tryPlace(state.selected, i);
-      state.selected = null; render();
+      if(i === state.selected){ statusEl.textContent=`Star ${i+1} remains selected`; render(); return }
+      const previous = state.selected;
+      if(tryPlace(state.selected, i)){
+        state.selected = i;
+      } else {
+        state.selected = previous;
+      }
+      render();
     });
 
     // hint shows one missing target connection visually for 2 seconds
@@ -309,17 +329,17 @@
         }
         const {a,b} = edgeList[step++];
         state.selected = a;
+        statusEl.textContent = `Demo: select star ${a+1}`;
         render();
-        statusEl.textContent = `Demo: start at star ${a+1}`;
         setTimeout(()=>{
           state.segments.push({a,b});
           state.placed.add(edgeKey(a,b));
           usedEl.textContent = state.segments.length;
-          statusEl.textContent = `Demo: connecting ${a+1} → ${b+1}`;
-          state.selected = null;
+          state.selected = b;
+          statusEl.textContent = `Demo: connected ${a+1} → ${b+1}`;
           render();
-          setTimeout(animate, 600);
-        }, 500);
+          setTimeout(animate, 700);
+        }, 800);
       }
       animate();
     }
