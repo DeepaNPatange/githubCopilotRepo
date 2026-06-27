@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Constellation Connect</title>
+  <style>
+    :root{
+      --bg:#071028;
+      --panel:#07172a99;
+      --star:#ffd36b;
+      --line:#8ec5ff;
+      --target-line: #2f6f9f33;
+      --text:#e6f0ff;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#031424);color:var(--text)}
+    .container{max-width:900px;margin:24px auto;padding:16px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{font-size:1.25rem;margin:0}
+    .controls{display:flex;gap:8px;align-items:center}
+    button,select{background:#0b2a44;border:1px solid #16405f;color:var(--text);padding:8px 10px;border-radius:6px;cursor:pointer}
+    button:disabled{opacity:0.5;cursor:default}
+    .panel{margin-top:16px;background:var(--panel);padding:12px;border-radius:10px}
+    .game-row{display:flex;gap:16px}
+    .canvas-wrap{flex:1;min-height:420px;display:flex;align-items:center;justify-content:center}
+    canvas{background:transparent;border-radius:8px;max-width:100%;height:auto}
+    .sidebar{width:260px}
+    .stat{margin-bottom:10px}
+    .hint{font-size:0.9rem;opacity:0.9}
+    .footer{margin-top:12px;font-size:0.9rem;opacity:0.9}
+    .status{margin-top:8px;color:#bfe3ff}
+    p.instructions{margin:8px 0 0 0;font-size:0.95rem}
+
+    /* small screens */
+    @media (max-width:800px){
+      .game-row{flex-direction:column}
+      .sidebar{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Constellation Connect</h1>
+        <p class="hint">Connect stars to recreate the hidden constellation. No crossing lines. Limited links.</p>
+      </div>
+      <div class="controls">
+        <label for="level">Level:</label>
+        <select id="level" aria-label="Select level"></select>
+        <button id="reset">Reset</button>
+        <button id="hint">Hint</button>
+        <button id="demo">Demo</button>
+      </div>
+    </header>
+
+    <div class="panel">
+      <div class="game-row">
+        <div class="canvas-wrap">
+          <canvas id="c" width="720" height="540" role="img" aria-label="Constellation canvas"></canvas>
+        </div>
+        <aside class="sidebar">
+          <div class="stat"><strong>Lines used:</strong> <span id="used">0</span> / <span id="max">0</span></div>
+          <div class="stat"><strong>Stars:</strong> <span id="stars-count">0</span></div>
+          <div class="stat"><strong>Status:</strong>
+            <div id="status" class="status" aria-live="polite">Ready</div>
+          </div>
+          <p class="instructions">How to play: Click a star to start a segment, then click another star to connect. Recreate the hidden target constellation (faint preview). Lines cannot cross. Use <strong>Hint</strong> to show one missing connection.</p>
+          <div class="footer">Created as a single-file HTML game.</div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -- Game data: levels with normalized coordinates and target edges
+    const levels = [
+      {
+        name: 'Orion (easy)',
+        stars:[
+          [0.2,0.6],[0.35,0.45],[0.5,0.55],[0.6,0.45],[0.75,0.6],[0.5,0.75]
+        ],
+        edges:[[0,1],[1,2],[2,3],[3,4],[2,5]]
+      },
+      {
+        name: 'Little Dipper',
+        stars:[ [0.15,0.3],[0.25,0.35],[0.35,0.4],[0.45,0.45],[0.55,0.5],[0.65,0.55],[0.75,0.6] ],
+        edges:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6]]
+      },
+      {
+        name: 'Arrow',
+        stars:[ [0.45,0.2],[0.5,0.3],[0.55,0.2],[0.5,0.4],[0.5,0.55] ],
+        edges:[[0,1],[1,2],[1,3],[3,4]]
+      },
+      {
+        name:'Crown',
+        stars:[ [0.3,0.5],[0.38,0.4],[0.46,0.5],[0.54,0.4],[0.62,0.5] ],
+        edges:[[0,1],[1,2],[2,3],[3,4]]
+      }
+    ];
+
+    // -- Canvas and visual settings
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const levelSelect = document.getElementById('level');
+    const resetBtn = document.getElementById('reset');
+    const hintBtn = document.getElementById('hint');
+    const demoBtn = document.getElementById('demo');
+    const usedEl = document.getElementById('used');
+    const maxEl = document.getElementById('max');
+    const starsCountEl = document.getElementById('stars-count');
+    const statusEl = document.getElementById('status');
+
+    let state = {
+      levelIndex:0,
+      stars:[], // pixel coords
+      targets: new Set(), // string 'a-b'
+      placed: new Set(),
+      segments: [], // [{a,b}]
+      selected: null,
+      maxLines:0
+    };
+
+    // fill level selector
+    levels.forEach((l,i)=>{const opt = document.createElement('option');opt.value=i;opt.textContent=l.name;levelSelect.appendChild(opt)});
+
+    function resizeCanvasToDisplay() {
+      // keep size fixed but scale for devicePixelRatio
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(600, Math.floor(rect.width * dpr));
+      canvas.height = Math.floor((rect.height || 540) * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+
+    function loadLevel(index){
+      const def = levels[index];
+      state.levelIndex=index;
+      state.stars = def.stars.map(([x,y])=>({x,y}));
+      state.targets = new Set(def.edges.map(e=>edgeKey(e[0],e[1])));
+      state.placed = new Set();
+      state.segments = [];
+      state.selected = null;
+      // set max lines roughly equal to edges + 1
+      state.maxLines = Math.min(20, Math.max(def.edges.length + 1, Math.ceil(def.edges.length * 1.2)));
+      usedEl.textContent = '0';
+      maxEl.textContent = state.maxLines;
+      starsCountEl.textContent = state.stars.length;
+      statusEl.textContent = 'Ready';
+      render();
+    }
+
+    function edgeKey(a,b){ return a<b? a+'-'+b : b+'-'+a }
+
+    function render(){
+      const W = canvas.clientWidth || 720;
+      const H = canvas.clientHeight || 540;
+      // clear
+      ctx.clearRect(0,0, W, H);
+      // background starfield
+      ctx.fillStyle = 'rgba(255,255,255,0.02)';
+      for(let i=0;i<120;i++){ ctx.fillRect(Math.random()*W, Math.random()*H, Math.random()*2, Math.random()*2) }
+
+      // compute pixel positions
+      const padding = 40;
+      const starsPx = state.stars.map(s=>({
+        px: padding + s.x*(W-2*padding),
+        py: padding + s.y*(H-2*padding)
+      }));
+
+      // draw target faint lines
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--target-line') || 'rgba(47,111,159,0.18)';
+      ctx.beginPath();
+      levels[state.levelIndex].edges.forEach(([a,b])=>{
+        const A = starsPx[a]; const B = starsPx[b];
+        ctx.moveTo(A.px, A.py); ctx.lineTo(B.px, B.py);
+      });
+      ctx.stroke();
+
+      // draw placed segments (user)
+      ctx.lineWidth=4; ctx.strokeStyle = 'var(--line)'; ctx.lineCap='round';
+      state.segments.forEach(s=>{
+        const A = starsPx[s.a]; const B = starsPx[s.b];
+        ctx.beginPath(); ctx.moveTo(A.px,A.py); ctx.lineTo(B.px,B.py); ctx.stroke();
+      });
+
+      // draw stars
+      starsPx.forEach((pt,i)=>{
+        // halo
+        ctx.beginPath(); ctx.fillStyle = 'rgba(255,211,107,0.12)'; ctx.arc(pt.px,pt.py,12,0,Math.PI*2); ctx.fill();
+        // core
+        ctx.beginPath(); ctx.fillStyle = 'var(--star)'; ctx.arc(pt.px,pt.py,5,0,Math.PI*2); ctx.fill();
+        // index label small
+        ctx.fillStyle = '#ffffff66'; ctx.font='11px Arial'; ctx.fillText(i+1, pt.px+8, pt.py+4);
+      });
+
+      // highlight selected
+      if(state.selected !== null){ const s = starsPx[state.selected]; ctx.beginPath(); ctx.strokeStyle='#ffffff88'; ctx.lineWidth=2; ctx.arc(s.px,s.py,14,0,Math.PI*2); ctx.stroke(); }
+    }
+
+    // detect nearest star
+    function findStarAt(px,py){
+      const rect = canvas.getBoundingClientRect();
+      const W = canvas.clientWidth || 720;
+      const H = canvas.clientHeight || 540;
+      const padding = 40;
+      const starsPx = state.stars.map(s=>({px: padding + s.x*(W-2*padding), py: padding + s.y*(H-2*padding)}));
+      for(let i=0;i<starsPx.length;i++){
+        const d = Math.hypot(px - starsPx[i].px, py - starsPx[i].py);
+        if(d < 16) return i;
+      }
+      return null;
+    }
+
+    function segmentsIntersect(a1,a2,b1,b2){
+      // a1,a2,b1,b2 are {x,y}
+      function ccw(p1,p2,p3){ return (p3.y-p1.y)*(p2.x-p1.x) > (p2.y-p1.y)*(p3.x-p1.x) }
+      return (ccw(a1,b1,b2) !== ccw(a2,b1,b2)) && (ccw(a1,a2,b1) !== ccw(a1,a2,b2));
+    }
+
+    function tryPlace(a,b){
+      if(a===b) return false;
+      const key = edgeKey(a,b);
+      if(state.placed.has(key)) return false; // already placed
+      if(state.segments.length >= state.maxLines) { statusEl.textContent = 'No lines remaining'; return false }
+
+      // compute pixel coords for intersection checks
+      const W = canvas.clientWidth || 720; const H = canvas.clientHeight || 540; const padding = 40;
+      const starsPx = state.stars.map(s=>({x: padding + s.x*(W-2*padding), y: padding + s.y*(H-2*padding)}));
+      const A = starsPx[a]; const B = starsPx[b];
+      // check intersection with existing segments (excluding shared endpoints)
+      for(const seg of state.segments){
+        if(seg.a===a || seg.a===b || seg.b===a || seg.b===b) continue;
+        const C = starsPx[seg.a]; const D = starsPx[seg.b];
+        if(segmentsIntersect(A,B,C,D)){ statusEl.textContent='Segments cannot cross.'; return false }
+      }
+
+      // add
+      state.segments.push({a,b}); state.placed.add(key);
+      usedEl.textContent = state.segments.length;
+      statusEl.textContent='Placed segment';
+      checkWin(); render(); return true;
+    }
+
+    function checkWin(){
+      // Win if placed edges include all targets (orderless) and no extras (we allow extras but require at least all targets)
+      let matched = 0; for(const t of state.targets){ if(state.placed.has(t)) matched++ }
+      if(matched === state.targets.size){ statusEl.textContent='You completed the constellation! 🎉'; }
+      else statusEl.textContent = `Connected ${matched}/${state.targets.size}`;
+    }
+
+    // canvas interaction
+    canvas.addEventListener('click', (ev)=>{
+      const rect = canvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left; const y = ev.clientY - rect.top;
+      const i = findStarAt(x,y);
+      if(i===null){ state.selected=null; render(); return }
+      if(state.selected===null){ state.selected=i; statusEl.textContent=`Selected star ${i+1}`; render(); return }
+      // try place between state.selected and i
+      tryPlace(state.selected, i);
+      state.selected = null; render();
+    });
+
+    // hint shows one missing target connection visually for 2 seconds
+    hintBtn.addEventListener('click', ()=>{
+      // find a target not yet placed
+      for(const t of state.targets){ if(!state.placed.has(t)){
+        const [aStr,bStr] = t.split('-'); const a=Number(aStr), b=Number(bStr);
+        showHint(a,b); return;
+      }}
+      statusEl.textContent='No hints — constellation complete or nothing missing.';
+    });
+
+    function showHint(a,b){
+      const W = canvas.clientWidth || 720; const H = canvas.clientHeight || 540; const padding = 40;
+      const starsPx = state.stars.map(s=>({x: padding + s.x*(W-2*padding), y: padding + s.y*(H-2*padding)}));
+      const A = starsPx[a]; const B = starsPx[b];
+      // draw temporary highlight
+      ctx.save(); ctx.lineWidth=6; ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke(); ctx.restore();
+      statusEl.textContent = `Hint: connect star ${a+1} and ${b+1}`;
+      setTimeout(()=>{ render() }, 1400);
+    }
+
+    function disableControls(value){
+      resetBtn.disabled = value;
+      hintBtn.disabled = value;
+      demoBtn.disabled = value;
+      levelSelect.disabled = value;
+    }
+
+    function runDemo(){
+      disableControls(true);
+      loadLevel(state.levelIndex);
+      const edgeList = Array.from(state.targets).map(key=>{
+        const [a,b] = key.split('-').map(Number);
+        return {a,b};
+      });
+      let step = 0;
+      function animate(){
+        if(step >= edgeList.length){
+          state.selected = null;
+          render();
+          statusEl.textContent = 'Demo finished — now try yourself!';
+          disableControls(false);
+          return;
+        }
+        const {a,b} = edgeList[step++];
+        state.selected = a;
+        render();
+        statusEl.textContent = `Demo: start at star ${a+1}`;
+        setTimeout(()=>{
+          state.segments.push({a,b});
+          state.placed.add(edgeKey(a,b));
+          usedEl.textContent = state.segments.length;
+          statusEl.textContent = `Demo: connecting ${a+1} → ${b+1}`;
+          state.selected = null;
+          render();
+          setTimeout(animate, 600);
+        }, 500);
+      }
+      animate();
+    }
+
+    resetBtn.addEventListener('click', ()=>{ loadLevel(state.levelIndex) });
+    levelSelect.addEventListener('change', (e)=>{ loadLevel(Number(e.target.value)) });
+    demoBtn.addEventListener('click', runDemo);
+
+    // initial render and size handling
+    function init(){
+      // set canvas display size
+      canvas.style.width = '720px'; canvas.style.height = '540px';
+      // load default
+      resizeCanvasToDisplay(); loadLevel(0);
+    }
+
+    window.addEventListener('resize', ()=>{ resizeCanvasToDisplay(); render() });
+
+    // small accessibility: keyboard navigation between stars via arrow keys
+    window.addEventListener('keydown', (e)=>{
+      if(document.activeElement && (document.activeElement.tagName==='INPUT' || document.activeElement.tagName==='SELECT')) return;
+      const n = state.stars.length;
+      if(n===0) return;
+      if(state.selected === null) state.selected = 0;
+      if(e.key === 'ArrowRight' || e.key==='l') state.selected = (state.selected+1)%n;
+      else if(e.key==='ArrowLeft' || e.key==='h') state.selected = (state.selected-1 + n)%n;
+      else if(e.key==='Enter' || e.key===' ') { // attempt to connect to next star
+        const target = (state.selected+1)%n; tryPlace(state.selected, target); state.selected=null;
+      }
+      render();
+    });
+
+    // Initialize UI options and game
+    (function(){
+      levelSelect.selectedIndex = 0; init();
+    })();
+  </script>
+</body>
+</html>

@@ -8,11 +8,14 @@
         /* Reset default styles and set up CSS custom properties for theming */
         :root {
             --primary-color: #2196f3;
+            --primary-color-hover: #1565c0;
             --background-color: #f5f5f5;
             --card-back: #1976d2;
             --card-front: #ffffff;
             --text-color: #333333;
             --success-color: #4caf50;
+            --modal-background: rgba(0,0,0,0.5);
+            --surface: #ffffff;
         }
 
         * {
@@ -54,7 +57,7 @@
             justify-content: space-around;
             flex-wrap: wrap;
             gap: 1rem;
-            background: white;
+            background: var(--surface);
             padding: 1rem;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -88,7 +91,7 @@
         }
 
         button:hover {
-            background-color: #1565c0;
+            background-color: var(--primary-color-hover);
         }
 
         button.active {
@@ -167,13 +170,13 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: var(--modal-background);
             justify-content: center;
             align-items: center;
         }
 
         .modal-content {
-            background: white;
+            background: var(--surface);
             padding: 2rem;
             border-radius: 8px;
             text-align: center;
@@ -190,9 +193,39 @@
         .scores-list {
             max-width: 600px;
             margin: 1rem auto;
-            background: white;
+            background: var(--surface);
             padding: 1rem;
             border-radius: 8px;
+        }
+
+        /* Dark theme overrides */
+        .dark-theme {
+            --background-color: #121212;
+            --text-color: #eaeaea;
+            --primary-color: #90caf9;
+            --primary-color-hover: #64b5f6;
+            --card-back: #1565c0;
+            --card-front: #263238;
+            --modal-background: rgba(0,0,0,0.75);
+            --surface: #1e1e1e;
+        }
+
+        /* Theme toggle button */
+        .theme-toggle {
+            background: transparent;
+            border: 2px solid transparent;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .theme-toggle:focus {
+            outline: 3px solid var(--primary-color);
+            outline-offset: 2px;
         }
 
         /* Responsive design adjustments */
@@ -219,6 +252,11 @@
             <h1>Memory Game</h1>
             <p>Match all the pairs to win! Use keyboard or mouse to play.</p>
         </header>
+
+        <!-- Theme toggle -->
+        <div style="text-align:center; margin-bottom:1rem;">
+            <button class="theme-toggle" aria-pressed="false" aria-label="Toggle dark theme">🌙 Dark</button>
+        </div>
 
         <!-- Game statistics panel -->
         <div class="controls">
@@ -500,6 +538,50 @@
 
         // Initialize game
         updateScoresList();
+        // Theme initialization helper
+        const THEME_KEY = 'memoryGameTheme';
+        const themeToggleBtn = document.querySelector('.theme-toggle');
+
+        function applyTheme(theme) {
+            document.body.classList.toggle('dark-theme', theme === 'dark');
+            try {
+                localStorage.setItem(THEME_KEY, theme);
+            } catch (e) {
+                // ignore storage errors
+            }
+            if (themeToggleBtn) {
+                const pressed = theme === 'dark';
+                themeToggleBtn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+                themeToggleBtn.textContent = pressed ? '☀️ Light' : '🌙 Dark';
+            }
+        }
+
+        function getSavedTheme() {
+            try {
+                return localStorage.getItem(THEME_KEY);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function getPreferredTheme() {
+            const saved = getSavedTheme();
+            if (saved === 'dark' || saved === 'light') return saved;
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+            return 'light';
+        }
+
+        if (themeToggleBtn) {
+            themeToggleBtn.addEventListener('click', () => {
+                const current = document.body.classList.contains('dark-theme') ? 'dark' : 'light';
+                const next = current === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+            });
+        }
+
+        // Apply theme before initializing grid to avoid FOUC
+        applyTheme(getPreferredTheme());
+
         initializeGrid();
     </script>
 </body>
