@@ -33,9 +33,18 @@ A collection of single-file HTML games built with pure HTML, CSS, and JavaScript
 1. Open `constellation-connect.html` in a web browser
 2. Select a level from the dropdown
 3. Click a star to start a segment, then click another star to connect
-4. Avoid crossing lines and use the least number of links
-5. Use the `Hint` button to reveal a missing connection
-6. Use the `Demo` button to watch the constellation build step-by-step
+4. The selected star stays highlighted so you can continue building the constellation step-by-step
+5. Avoid crossing lines and use the least number of links
+6. Use the `Hint` button to reveal a missing connection
+7. Use the `Demo` button to watch the constellation build step-by-step
+
+#### Manual step-by-step approach
+- Start from one endpoint of the faint preview constellation.
+- Click the first star you want to connect; it will highlight in blue.
+- Click the next star to draw the line. If the line is valid, the second star stays selected.
+- Continue connecting from the currently selected star to the next star.
+- If a connection is invalid, try a different next star while keeping the current selection.
+- Use the faint preview lines as your guide for the exact shape.
 
 ## Technical Details
 
